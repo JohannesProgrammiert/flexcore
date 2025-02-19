@@ -3,6 +3,15 @@ use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::thread::JoinHandle;
 
+pub mod region;
+pub use region::Region;
+
+pub mod node;
+pub use node::Node;
+
+pub mod ports;
+pub use ports::{Input, Output};
+
 /// The infrastructure manages regions and threads.
 pub struct Infrastructure {
     /// Region settings
@@ -23,6 +32,7 @@ impl Infrastructure {
     }
 
     /// Run the infrastructure
+    /// Returns a `RunningInfrastructure` handle that stops the entire system when going out of scope.
     pub fn run(mut self) -> RunningInfrastructure {
         let regions = std::mem::take(&mut self.regions);
         let mut ret = RunningInfrastructure {
@@ -32,16 +42,16 @@ impl Infrastructure {
         for mut region in regions {
             let exit = ret.exit_signal.clone();
             let join_hdl = std::thread::Builder::new()
-                .name(region.name)
+                .name(region.name().clone())
                 .spawn(move || loop {
                     if exit.load(Ordering::Relaxed) {
                         return;
                     }
-                    for node in &mut region.nodes {
+                    for node in region.nodes_mut() {
                         node.tick();
                         node.process_input();
                     }
-                    std::thread::sleep(region.tick);
+                    std::thread::sleep(region.tick());
                 })
                 .expect("Could not launch thread");
             ret.threads.push(join_hdl);
@@ -50,6 +60,9 @@ impl Infrastructure {
     }
 }
 
+/// Regions/threads are exited once this handle goes out of scope.
+///
+/// The only way of creating this object shall be `Infrastructure::run`.
 pub struct RunningInfrastructure {
     /// Thread handles after thread processing has been started
     threads: Vec<JoinHandle<()>>,
@@ -63,74 +76,6 @@ impl Drop for RunningInfrastructure {
         let threads = std::mem::take(&mut self.threads);
         for thr in threads {
             thr.join().expect("Cannot join thread");
-        }
-    }
-}
-
-pub struct Region {
-    name: String,
-    /// Work tick duration
-    tick: std::time::Duration,
-    /// Processing nodes in this region
-    nodes: Vec<Box<dyn Node>>,
-}
-
-impl Region {
-    /// Construct new region.
-    pub fn new(name: impl Into<String>, tick: std::time::Duration) -> Self {
-        Self {
-            name: name.into(),
-            tick,
-            nodes: Vec::new(),
-        }
-    }
-
-    /// Add a node to this region
-    pub fn add_node<T: Node + 'static>(&mut self, node: T) {
-        self.nodes.push(Box::new(node));
-    }
-}
-
-pub trait Node: Send {
-    fn name(&self) -> &String;
-    fn tick(&mut self) {}
-
-    // TODO I want something like this that collects all input port in general
-    fn process_input(&mut self);
-}
-
-#[derive(Default)]
-pub struct Input<T> {
-    rx: Vec<std::sync::mpsc::Receiver<T>>,
-}
-
-impl<T> Input<T> {
-    pub fn fetch(&mut self) -> Vec<T> {
-        let mut ret = Vec::new();
-        for r in &mut self.rx {
-            match r.try_recv() {
-                Ok(data) => ret.push(data),
-                Err(_) => {}
-            }
-        }
-        ret
-    }
-}
-
-#[derive(Default)]
-pub struct Output<T: Clone> {
-    tx: Vec<std::sync::mpsc::Sender<T>>,
-}
-
-impl<T: Clone> Output<T> {
-    pub fn connect(&mut self, input: &mut Input<T>) {
-        let (tx, rx) = std::sync::mpsc::channel();
-        self.tx.push(tx);
-        input.rx.push(rx);
-    }
-    pub fn fire(&mut self, t: T) {
-        for tx in &mut self.tx {
-            tx.send(t.clone()).expect("Cannot send message");
         }
     }
 }
@@ -247,15 +192,9 @@ mod tests {
             .out_measurements
             .connect(&mut processing.in_measurements);
 
-        assert_eq!(sensor_interface.out_measurements.tx.len(), 1);
-        assert_eq!(processing.in_measurements.rx.len(), 1);
-
         processing
             .out_velocity
             .connect(&mut business_logic.in_velocity);
-
-        assert_eq!(processing.out_velocity.tx.len(), 1);
-        assert_eq!(business_logic.in_velocity.rx.len(), 1);
 
         let mut r1 = Region::new("Sensor", std::time::Duration::from_secs(1));
 
@@ -263,7 +202,7 @@ mod tests {
         r1.add_node(processing);
         r1.add_node(business_logic);
 
-        assert_eq!(r1.nodes.len(), 3);
+        assert_eq!(r1.nodes_mut().len(), 3);
 
         let mut infra = Infrastructure::new();
         infra.add_region(r1);
