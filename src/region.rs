@@ -1,4 +1,33 @@
-use crate::Node;
+use crate::{FlexcoreError, InfrastructureBuilder, Node};
+
+pub struct RegionBuilder {
+    pub(crate) name: String,
+    pub(crate) tick: std::time::Duration,
+    pub(crate) nodes: Vec<Box<dyn Node>>,
+    pub(crate) infra: InfrastructureBuilder
+}
+
+impl RegionBuilder {
+    /// Add a node to this region
+    pub fn with_node<T: Node + 'static>(mut self, node: T) -> Self {
+        self.nodes.push(Box::new(node));
+        self
+    }
+
+    pub fn build(mut self) -> Result<InfrastructureBuilder, FlexcoreError> {
+        if self.nodes.is_empty() {
+            log::error!("Region {} has no nodes assigned. Please assign at least one node using `Self::with_node`", self.name);
+            return Err(FlexcoreError::NoNodes)
+        }
+        let region = Region {
+            name: self.name,
+            tick: self.tick,
+            nodes: self.nodes
+        };
+        self.infra.regions.push(region);
+        Ok(self.infra)
+    }
+}
 
 pub struct Region {
     name: String,
@@ -9,20 +38,6 @@ pub struct Region {
 }
 
 impl Region {
-    /// Construct new region.
-    pub fn new(name: impl Into<String>, tick: std::time::Duration) -> Self {
-        Self {
-            name: name.into(),
-            tick,
-            nodes: Vec::new(),
-        }
-    }
-
-    /// Add a node to this region
-    pub fn add_node<T: Node + 'static>(&mut self, node: T) {
-        self.nodes.push(Box::new(node));
-    }
-
     pub(crate) fn name(&self) -> &String {
         &self.name
     }

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use flexcore::*;
 
 #[derive(Default, Debug, Clone)]
@@ -98,6 +100,9 @@ impl Node for BusinessLogic {
 }
 
 fn main() {
+    env_logger::Builder::from_default_env()
+        .filter_level(log::LevelFilter::Debug)
+        .init();
     let mut sensor_interface = SensorInterface::new("counter");
     let mut processing = Processing::new("processing");
     let mut business_logic = BusinessLogic::new("output");
@@ -110,20 +115,25 @@ fn main() {
         .out_velocity
         .connect(&mut business_logic.in_velocity);
 
-    let mut r1 = Region::new("Sensor", std::time::Duration::from_secs_f64(0.1));
-    let mut r2 = Region::new("Processing", std::time::Duration::from_secs_f64(0.3));
-    let mut r3 = Region::new("Final", std::time::Duration::from_secs_f64(0.3));
+    let infra = InfrastructureBuilder::default();
+    let _handle = infra
+        .with_region("Sensor", Duration::from_secs_f64(0.1))
+        .with_node(sensor_interface)
+        .build()
+        .unwrap()
 
-    r1.add_node(sensor_interface);
-    r2.add_node(processing);
-    r3.add_node(business_logic);
+        .with_region("Processing", Duration::from_secs_f64(0.3))
+        .with_node(processing)
+        .build()
+        .unwrap()
 
-    let mut infra = Infrastructure::default();
-    infra.add_region(r1);
-    infra.add_region(r2);
-    infra.add_region(r3);
+        .with_region("Final", Duration::from_secs_f64(0.3))
+        .with_node(business_logic)
+        .build()
+        .unwrap()
 
-    // make sure this doesn't go out of scope yet
-    let _handle = infra.run();
+        .build()
+        .unwrap();
+
     std::thread::sleep(std::time::Duration::from_secs(3));
 }

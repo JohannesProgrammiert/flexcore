@@ -1,3 +1,4 @@
+/// Trait that describes a Node used in a Region.
 pub trait Node: Send {
     fn name(&self) -> &String;
 
