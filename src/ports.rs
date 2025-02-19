@@ -42,7 +42,9 @@ impl<T: Clone> Output<T> {
     /// Write data to this port.
     pub fn fire(&mut self, t: T) {
         for tx in &mut self.tx {
-            tx.send(t.clone()).expect("Cannot send message");
+            if let Err(e) = tx.send(t.clone()) {
+                log::error!("Could not send message: {e}");
+            }
         }
     }
 }
